@@ -1,114 +1,90 @@
-import streamlit as st
+import gradio as gr
 import pandas as pd
 import numpy as np
 import pickle
 
-# Load model + columns
+# Load model
 model, columns = pickle.load(open("model.pkl", "rb"))
 
-st.set_page_config(page_title="Churn AI", layout="wide")
+# ---------------- SINGLE PREDICTION ----------------
+def predict(gender, senior, tenure, monthly, total, contract, internet, tech, payment):
 
-# ---------------- THEME ----------------
-theme = st.sidebar.radio("Theme", ["Dark", "Light"])
+    data = {
+        "SeniorCitizen": senior,
+        "tenure": tenure,
+        "MonthlyCharges": monthly,
+        "TotalCharges": total,
+        "gender": gender,
+        "Contract": contract,
+        "InternetService": internet,
+        "TechSupport": tech,
+        "PaymentMethod": payment
+    }
 
-if theme == "Dark":
-    st.markdown("<style>.stApp {background-color:#0e1117; color:white;}</style>", unsafe_allow_html=True)
-else:
-    st.markdown("<style>.stApp {background-color:white; color:black;}</style>", unsafe_allow_html=True)
+    df = pd.DataFrame([data])
+    df = pd.get_dummies(df)
+    df = df.reindex(columns=columns, fill_value=0)
 
-# ---------------- HEADER ----------------
-st.title("🚀 Customer Churn Intelligence System")
-st.write("Predict churn using ML with batch & file support")
+    prob = model.predict_proba(df)[0][1]
+    pred = model.predict(df)[0]
 
-tab1, tab2, tab3 = st.tabs(["Single", "Batch", "Upload CSV"])
+    if pred == 1:
+        return f"⚠️ High Risk Customer\nChurn Probability: {prob*100:.2f}%"
+    else:
+        return f"✅ Safe Customer\nRetention Probability: {(1-prob)*100:.2f}%"
 
-# =================================================
-# 🔹 SINGLE PREDICTION
-# =================================================
-with tab1:
-    col1, col2 = st.columns(2)
+# ---------------- CSV PREDICTION ----------------
+def predict_csv(file):
 
-    with col1:
-        gender = st.selectbox("Gender", ["Male", "Female"])
-        senior = st.selectbox("Senior Citizen", [0, 1])
-        tenure = st.slider("Tenure", 0, 72)
-        monthly = st.number_input("Monthly Charges", 0.0, 200.0)
-        total = st.number_input("Total Charges", 0.0, 10000.0)
-        contract = st.selectbox("Contract", ["Month-to-month","One year","Two year"])
-        internet = st.selectbox("Internet", ["DSL","Fiber optic","No"])
-        tech = st.selectbox("Tech Support", ["Yes","No"])
-        payment = st.selectbox("Payment", ["Electronic check","Mailed check","Bank transfer","Credit card"])
+    df = pd.read_csv(file.name)
 
-        if st.button("Predict"):
+    df_encoded = pd.get_dummies(df)
+    df_encoded = df_encoded.reindex(columns=columns, fill_value=0)
 
-            input_dict = {
-                "SeniorCitizen": senior,
-                "tenure": tenure,
-                "MonthlyCharges": monthly,
-                "TotalCharges": total,
-            }
+    preds = model.predict(df_encoded)
+    probs = model.predict_proba(df_encoded)[:, 1]
 
-            df = pd.DataFrame([input_dict])
+    df["Churn"] = preds
+    df["Probability"] = probs
 
-            # Add categorical columns
-            df["gender"] = gender
-            df["Contract"] = contract
-            df["InternetService"] = internet
-            df["TechSupport"] = tech
-            df["PaymentMethod"] = payment
+    output_file = "results.csv"
+    df.to_csv(output_file, index=False)
 
-            # One-hot encoding
-            df = pd.get_dummies(df)
+    return output_file
 
-            # Match training columns
-            df = df.reindex(columns=columns, fill_value=0)
+# ---------------- UI ----------------
+with gr.Blocks() as app:
 
-            pred = model.predict(df)[0]
-            prob = model.predict_proba(df)[0][1]
+    gr.Markdown("# 🚀 Customer Churn Prediction System")
+    gr.Markdown("Fast ML App using Gradio + Hugging Face")
 
-            with col2:
-                st.metric("Churn Probability", f"{prob*100:.2f}%")
+    with gr.Tab("🔍 Single Prediction"):
 
-                if pred == 1:
-                    st.error("High Risk 🚨")
-                else:
-                    st.success("Safe Customer ✅")
+        gender = gr.Radio(["Male","Female"], label="Gender")
+        senior = gr.Radio([0,1], label="Senior Citizen")
+        tenure = gr.Slider(0,72, label="Tenure")
+        monthly = gr.Number(label="Monthly Charges")
+        total = gr.Number(label="Total Charges")
+        contract = gr.Dropdown(["Month-to-month","One year","Two year"])
+        internet = gr.Dropdown(["DSL","Fiber optic","No"])
+        tech = gr.Dropdown(["Yes","No"])
+        payment = gr.Dropdown(["Electronic check","Mailed check","Bank transfer","Credit card"])
 
-# =================================================
-# 🔹 BATCH PREDICTION
-# =================================================
-with tab2:
-    st.write("Enter multiple customers")
+        output = gr.Textbox(label="Prediction")
 
-    df = st.data_editor(pd.DataFrame(columns=columns))
+        btn = gr.Button("Predict")
 
-    if st.button("Run Batch"):
-        preds = model.predict(df)
-        probs = model.predict_proba(df)[:,1]
+        btn.click(predict,
+                  inputs=[gender, senior, tenure, monthly, total, contract, internet, tech, payment],
+                  outputs=output)
 
-        df["Churn"] = preds
-        df["Probability"] = probs
+    with gr.Tab("📁 Upload CSV"):
 
-        st.dataframe(df)
+        file_input = gr.File(label="Upload CSV")
+        file_output = gr.File(label="Download Results")
 
-# =================================================
-# 🔹 CSV UPLOAD
-# =================================================
-with tab3:
-    file = st.file_uploader("Upload CSV", type=["csv"])
+        btn2 = gr.Button("Run Prediction")
 
-    if file:
-        df = pd.read_csv(file)
+        btn2.click(predict_csv, inputs=file_input, outputs=file_output)
 
-        df_encoded = pd.get_dummies(df)
-        df_encoded = df_encoded.reindex(columns=columns, fill_value=0)
-
-        preds = model.predict(df_encoded)
-        probs = model.predict_proba(df_encoded)[:,1]
-
-        df["Churn"] = preds
-        df["Probability"] = probs
-
-        st.dataframe(df)
-
-        st.download_button("Download Results", df.to_csv(index=False), "results.csv")
+app.launch()
